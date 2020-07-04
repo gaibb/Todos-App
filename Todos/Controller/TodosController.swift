@@ -7,32 +7,23 @@
 //
 
 import UIKit
+import RealmSwift
 
 class TodosController: UITableViewController {
 
-    var todos = [
-        Todo(name: "eating dinner", checked: false),
-        Todo(name: "sleeping for 6 hours", checked: false),
-        Todo(name: "playing LOL", checked: false)
-    ]
+//    var todos = [Todo]()
+    var todos: Results<Todo>?
     var row = 0
+    let realm = try! Realm()
     
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Uncomment the following line to preserve selection between presentations
-        // self.clearsSelectionOnViewWillAppear = false
-
-        // Uncomment the following line to display an Edit button in the navigation bar for this view controller.
         self.navigationItem.leftBarButtonItem = self.editButtonItem
+        //从realm中取出数据
+        todos = realm.objects(Todo.self)
         
-        if let data = UserDefaults.standard.data(forKey: "todos") {
-            do {
-                todos = try JSONDecoder().decode([Todo].self, from: data)
-            } catch  {
-                print(error)
-            }
-        }
+//        print(Realm.Configuration.defaultConfiguration.fileURL)
     }
 
     // MARK: - Table view data source
@@ -44,7 +35,7 @@ class TodosController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         // #warning Incomplete implementation, return the number of rows
-        return todos.count
+        return todos?.count ?? 1
     }
 
     
@@ -52,39 +43,46 @@ class TodosController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: "todos", for: indexPath) as! TodoCell
 
         // Configure the cell...
-        cell.todo.text = todos[indexPath.row].name
-        cell.checkMark.text = todos[indexPath.row].checked ? "√" : ""
+        if let todos = todos {
+            cell.todo.text = todos[indexPath.row].name
+            cell.checkMark.text = todos[indexPath.row].checked ? "√" : ""
+        } else {
+            cell.todo.text = "null"
+        }
 
         return cell
     }
     
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         if !isEditing {
-            todos[indexPath.row].checked = !todos[indexPath.row].checked
-            let cell = tableView.cellForRow(at: indexPath) as! TodoCell
-            cell.checkMark.text = todos[indexPath.row].checked ? "√" : ""
-            tableView.deselectRow(at: indexPath, animated: true)
-            saveData()
+            //修改数据
+            if let todos = todos {
+                do {
+                    try realm.write({
+                        todos[indexPath.row].checked = !todos[indexPath.row].checked
+                    })
+                } catch {
+                    print(error)
+                }
+            }
+            //更新视图
+            tableView.reloadData()
         }
     }
-    
 
-    /*
-    // Override to support conditional editing of the table view.
-    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
-        // Return false if you do not want the specified item to be editable.
-        return true
-    }
-    */
-
-    
     // Override to support editing the table view.
     override func tableView(_ tableView: UITableView, commit editingStyle: UITableViewCell.EditingStyle, forRowAt indexPath: IndexPath) {
         if editingStyle == .delete {
-            todos.remove(at: indexPath.row)
-            saveData()
-            // Delete the row from the data source
-            tableView.deleteRows(at: [indexPath], with: .fade)
+            //修改数据
+            do {
+                try realm.write({
+                    realm.delete(todos![indexPath.row])
+                })
+            } catch {
+                print(error)
+            }
+            //更新视图
+            tableView.reloadData()
         } else if editingStyle == .insert {
             // Create a new instance of the appropriate class, insert it into the array, and add a new row to the table view
         }    
@@ -93,27 +91,6 @@ class TodosController: UITableViewController {
     override func tableView(_ tableView: UITableView, titleForDeleteConfirmationButtonForRowAt indexPath: IndexPath) -> String? {
         return "delete"
     }
-    
-
-    
-    // Override to support rearranging the table view.
-    override func tableView(_ tableView: UITableView, moveRowAt fromIndexPath: IndexPath, to: IndexPath) {
-        let todo = todos.remove(at: fromIndexPath.row)
-        todos.insert(todo, at: to.row)
-        tableView.moveRow(at: fromIndexPath, to: to)
-        saveData()
-        tableView.reloadData()
-    }
-    
-
-    /*
-    // Override to support conditional rearranging of the table view.
-    override func tableView(_ tableView: UITableView, canMoveRowAt indexPath: IndexPath) -> Bool {
-        // Return false if you do not want the item to be re-orderable.
-        return true
-    }
-    */
-
     
     // MARK: - Navigation
 
@@ -129,42 +106,73 @@ class TodosController: UITableViewController {
     }
     
     @IBAction func multipleDelete(_ sender: Any) {
+        //modify data
         let indexPaths = tableView.indexPathsForSelectedRows
         if let indexPaths = indexPaths {
-            for indexPath in indexPaths {
-                todos.remove(at: indexPath.row)
+            for indexPath in indexPaths.reversed() {
+//                todos.remove(at: indexPath.row)
+                do {
+                    try realm.write({
+                        realm.delete((todos![indexPath.row]))
+                    })
+                } catch {
+                    print(error)
+                }
             }
+            //update view
             tableView.beginUpdates()
             tableView.deleteRows(at: indexPaths, with: .automatic)
             tableView.endUpdates()
-            saveData()
         }
     }
     
 }
 
-extension TodosController: TodoDelegate {
+extension TodosController: TodoDelegate, UISearchBarDelegate {
     func editTodo(name: String) {
-        todos[row].name = name
-        let indexPath = IndexPath(row: row, section: 0)
-        let cell = tableView.cellForRow(at: indexPath) as! TodoCell
-        cell.todo.text = name
-        saveData()
+        //修改数据
+        do {
+            try realm.write({
+                todos![row].name = name
+            })
+        } catch  {
+            print(error)
+        }
+        //更新视图
+        tableView.reloadData()
     }
     
     func addTodo(name: String) {
-        todos.append(Todo(name: name, checked: false))
-        saveData()
-        let indexPath = IndexPath(row: todos.count - 1, section: 0)
-        tableView.insertRows(at: [indexPath], with: .automatic)
+        let todo = Todo()
+        todo.name = name
+        saveData(todo: todo)
+        tableView.reloadData()  //调用cellForRowAt方法
     }
     
-    func saveData() -> Void {
+    func saveData(todo: Todo) -> Void {
         do {
-            let data = try JSONEncoder().encode(todos)
-            UserDefaults.standard.set(data, forKey: "todos")
-        } catch {
+            try realm.write({
+                realm.add(todo)
+            })
+        } catch  {
             print(error)
+        }
+    }
+    
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        //查询数据
+        todos = realm.objects(Todo.self).filter("name CONTAINS %@", searchBar.text ?? "").sorted(byKeyPath: "createTime", ascending: true)
+        //更新视图
+        tableView.reloadData()
+    }
+    
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        if searchBar.text!.isEmpty {
+            todos = realm.objects(Todo.self)
+            tableView.reloadData()
+            DispatchQueue.main.async {
+                searchBar.resignFirstResponder()
+            }
         }
     }
 }
